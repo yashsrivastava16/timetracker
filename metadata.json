@@ -1,0 +1,6 @@
+{
+  "name": "Daily Prep Schedule",
+  "description": "Structured daily routine and interview prep schedule tracker with weekday and weekend routines, deep work focus timers, and Sept 17 to Mar 27 phase roadmap.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
