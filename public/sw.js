@@ -1,6 +1,23 @@
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(clients.claim());
+});
+
 self.addEventListener('push', function(event) {
+  console.log('[Service Worker] Push Received.');
+  console.log(`[Service Worker] Push had this data: "${event.data.text()}"`);
+
   if (event.data) {
-    const data = event.data.json();
+    let data;
+    try {
+      data = event.data.json();
+    } catch (err) {
+      console.error('[Service Worker] Error parsing push data as JSON:', err);
+      data = { title: "Notification", body: event.data.text() };
+    }
     
     const options = {
       body: data.body,
