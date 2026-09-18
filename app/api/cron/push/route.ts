@@ -47,7 +47,10 @@ export async function GET(req: Request) {
 
     await connectDB();
     const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    // Convert to local time, defaulting to Asia/Kolkata (IST) since Railway runs in UTC
+    const tzString = now.toLocaleString('en-US', { timeZone: process.env.TIMEZONE || 'Asia/Kolkata' });
+    const localNow = new Date(tzString);
+    const currentMinutes = localNow.getHours() * 60 + localNow.getMinutes();
 
     const schedules = await Schedule.find();
     
