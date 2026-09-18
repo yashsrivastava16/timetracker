@@ -7,8 +7,13 @@ import DailyTask from '@/lib/models/DailyTask.js';
 
 // Initialize web push if keys exist
 if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@yourdomain.com';
+  const formattedSubject = vapidSubject.startsWith('mailto:') || vapidSubject.startsWith('http') 
+    ? vapidSubject 
+    : `mailto:${vapidSubject}`;
+
   webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:admin@yourdomain.com', // Push services (like Chrome/Google) use this to contact you if there are issues
+    formattedSubject, // Push services (like Chrome/Google) use this to contact you if there are issues
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
   );
