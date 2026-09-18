@@ -15,6 +15,8 @@ if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 
 // Next.js config to allow cron to bypass auth if we had auth, but we use Clerk middleware which we need to bypass for this route
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -30,16 +32,17 @@ export async function GET(req: Request) {
     if (process.env.CRON_SECRET && !hasValidSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    // We enforce 1-minute interval logic since cron runs every 1 minute
-    const cronInterval = 1;
+    // Restore 5-minute interval logic
+    const intervalParam = url.searchParams.get('interval');
+    const cronInterval = intervalParam ? parseInt(intervalParam, 10) : 5;
 
-    // Helper to check if a target time falls exactly on the current minute
-    const isWithinWindow = (target: number, current: number) => {
+    // Helper to check if a target time falls within the cron execution window
+    const isWithinWindow = (target: number, current: number, interval: number) => {
+      const half = Math.floor(interval / 2);
       let diff = Math.abs(target - current);
       if (diff > 720) diff = 1440 - diff; // Handle midnight wraparound
       
-      // For 1-minute cron, we check for an exact match or within 1 minute just in case of slight delay
-      return diff <= 0;
+      return diff <= half;
     };
 
     await connectDB();
@@ -60,11 +63,11 @@ export async function GET(req: Request) {
           notifyTypes = ['15_min_before', 'on_time'];
         }
       } else {
-        if (isWithinWindow(schedule.startMinutes - 15, currentMinutes)) {
+        if (isWithinWindow(schedule.startMinutes - 15, currentMinutes, cronInterval)) {
           notifyTypes.push('15_min_before');
         }
         
-        if (isWithinWindow(schedule.startMinutes, currentMinutes)) {
+        if (isWithinWindow(schedule.startMinutes, currentMinutes, cronInterval)) {
           notifyTypes.push('on_time');
         }
       }
@@ -107,7 +110,7 @@ export async function GET(req: Request) {
           notify = true;
         }
       } else {
-        if (isWithinWindow(task.reminderMinutes, currentMinutes)) {
+        if (isWithinWindow(task.reminderMinutes, currentMinutes, cronInterval)) {
           notify = true;
         }
       }
