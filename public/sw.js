@@ -6,9 +6,14 @@ self.addEventListener('push', function(event) {
       body: data.body,
       data: {
         scheduleId: data.scheduleId,
+        taskId: data.taskId,
         type: data.type
       }
     };
+    
+    if (data.tag) {
+      options.tag = data.tag;
+    }
     
     event.waitUntil(
       self.registration.showNotification(data.title, options)

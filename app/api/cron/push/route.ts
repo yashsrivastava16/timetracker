@@ -8,7 +8,7 @@ import DailyTask from '@/lib/models/DailyTask.js';
 // Initialize web push if keys exist
 if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
-    'mailto:test@example.com',
+    process.env.VAPID_SUBJECT || 'mailto:admin@yourdomain.com', // Push services (like Chrome/Google) use this to contact you if there are issues
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
   );
@@ -16,56 +16,68 @@ if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 
 // Next.js config to allow cron to bypass auth if we had auth, but we use Clerk middleware which we need to bypass for this route
 export async function GET(req: Request) {
-  // In production, you'd want to secure this endpoint via a secret token sent by Vercel Cron
-  // e.g. if (req.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) { ... }
-  
   try {
     const url = new URL(req.url);
     const isTest = url.searchParams.get('test') === 'true';
-    const intervalParam = url.searchParams.get('interval');
-    const cronInterval = intervalParam ? parseInt(intervalParam, 10) : 1;
+    const secretQuery = url.searchParams.get('secret');
+    
+    // Secure this endpoint via a secret token sent by Vercel Cron
+    const authHeader = req.headers.get('Authorization');
+    const hasValidSecret = process.env.CRON_SECRET && 
+      (authHeader === `Bearer ${process.env.CRON_SECRET}` || secretQuery === process.env.CRON_SECRET);
+
+    // If CRON_SECRET is defined in .env, enforce it
+    if (process.env.CRON_SECRET && !hasValidSecret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    // We enforce 1-minute interval logic since cron runs every 1 minute
+    const cronInterval = 1;
+
+    // Helper to check if a target time falls exactly on the current minute
+    const isWithinWindow = (target: number, current: number) => {
+      let diff = Math.abs(target - current);
+      if (diff > 720) diff = 1440 - diff; // Handle midnight wraparound
+      
+      // For 1-minute cron, we check for an exact match or within 1 minute just in case of slight delay
+      return diff <= 0;
+    };
 
     await connectDB();
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // Helper to check if a target time falls within the cron execution window
-    // This perfectly handles intervals like 5 minutes by matching the closest cron tick
-    const isWithinWindow = (target: number, current: number, interval: number) => {
-      const half = Math.floor(interval / 2);
-      let diff = Math.abs(target - current);
-      if (diff > 720) diff = 1440 - diff; // Handle midnight wraparound
-      // For interval=5, half=2. Matches: current-2, current-1, current, current+1, current+2
-      return diff <= half;
-    };
-
     const schedules = await Schedule.find();
     
     let pushCount = 0;
 
+    let schedulePushSentInTest = false;
+
     for (const schedule of schedules) {
-      let notifyType = null;
+      let notifyTypes: string[] = [];
       
       if (isTest) {
-        notifyType = 'on_time';
+        if (!schedulePushSentInTest) {
+          notifyTypes = ['15_min_before', 'on_time'];
+        }
       } else {
-        if (isWithinWindow(schedule.startMinutes - 15, currentMinutes, cronInterval)) {
-          notifyType = '15_min_before';
+        if (isWithinWindow(schedule.startMinutes - 15, currentMinutes)) {
+          notifyTypes.push('15_min_before');
         }
         
-        if (isWithinWindow(schedule.startMinutes, currentMinutes, cronInterval)) {
-          notifyType = 'on_time';
+        if (isWithinWindow(schedule.startMinutes, currentMinutes)) {
+          notifyTypes.push('on_time');
         }
       }
 
-      if (notifyType) {
+      for (const notifyType of notifyTypes) {
         const subscriptions = await Subscription.find({ userId: schedule.userId });
         
         const payload = JSON.stringify({
           title: notifyType === 'on_time' ? "Time to Start!" : "Upcoming in 15 mins",
           body: `${schedule.title} (${schedule.timeRange})`,
           scheduleId: schedule._id,
-          type: notifyType
+          type: notifyType,
+          tag: `schedule-${schedule._id}-${notifyType}`
         });
 
         for (const sub of subscriptions) {
@@ -73,6 +85,7 @@ export async function GET(req: Request) {
             if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
               await webpush.sendNotification(sub.subscription, payload);
               pushCount++;
+              if (isTest) schedulePushSentInTest = true;
             }
           } catch (error: any) {
             console.error("Error sending push notification (may be expired):", error);
@@ -82,17 +95,19 @@ export async function GET(req: Request) {
           }
         }
       }
-      if (isTest && pushCount > 0) break; // In test mode, just send one round of notifications and break
     }
 
     // Now process Daily Tasks
+    let taskPushSentInTest = false;
     const tasks = await DailyTask.find({ completed: false });
     for (const task of tasks) {
       let notify = false;
       if (isTest) {
-        notify = true;
+        if (!taskPushSentInTest) {
+          notify = true;
+        }
       } else {
-        if (isWithinWindow(task.reminderMinutes, currentMinutes, cronInterval)) {
+        if (isWithinWindow(task.reminderMinutes, currentMinutes)) {
           notify = true;
         }
       }
@@ -104,7 +119,8 @@ export async function GET(req: Request) {
           title: "Daily Task Reminder",
           body: task.title,
           taskId: task._id,
-          type: 'daily_task'
+          type: 'daily_task',
+          tag: `task-${task._id}`
         });
 
         for (const sub of subscriptions) {
@@ -112,6 +128,7 @@ export async function GET(req: Request) {
             if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
               await webpush.sendNotification(sub.subscription, payload);
               pushCount++;
+              if (isTest) taskPushSentInTest = true;
             }
           } catch (error: any) {
             console.error("Error sending push notification (may be expired):", error);
