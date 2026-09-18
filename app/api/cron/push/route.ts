@@ -22,10 +22,22 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const isTest = url.searchParams.get('test') === 'true';
+    const intervalParam = url.searchParams.get('interval');
+    const cronInterval = intervalParam ? parseInt(intervalParam, 10) : 1;
 
     await connectDB();
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    // Helper to check if a target time falls within the cron execution window
+    // This perfectly handles intervals like 5 minutes by matching the closest cron tick
+    const isWithinWindow = (target: number, current: number, interval: number) => {
+      const half = Math.floor(interval / 2);
+      let diff = Math.abs(target - current);
+      if (diff > 720) diff = 1440 - diff; // Handle midnight wraparound
+      // For interval=5, half=2. Matches: current-2, current-1, current, current+1, current+2
+      return diff <= half;
+    };
 
     const schedules = await Schedule.find();
     
@@ -37,11 +49,11 @@ export async function GET(req: Request) {
       if (isTest) {
         notifyType = 'on_time';
       } else {
-        if (currentMinutes === schedule.startMinutes - 15) {
+        if (isWithinWindow(schedule.startMinutes - 15, currentMinutes, cronInterval)) {
           notifyType = '15_min_before';
         }
         
-        if (currentMinutes === schedule.startMinutes) {
+        if (isWithinWindow(schedule.startMinutes, currentMinutes, cronInterval)) {
           notifyType = 'on_time';
         }
       }
@@ -80,7 +92,7 @@ export async function GET(req: Request) {
       if (isTest) {
         notify = true;
       } else {
-        if (currentMinutes === task.reminderMinutes) {
+        if (isWithinWindow(task.reminderMinutes, currentMinutes, cronInterval)) {
           notify = true;
         }
       }
