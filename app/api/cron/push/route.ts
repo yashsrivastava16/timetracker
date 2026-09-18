@@ -46,11 +46,19 @@ export async function GET(req: Request) {
     };
 
     await connectDB();
-    const now = new Date();
-    // Convert to local time, defaulting to Asia/Kolkata (IST) since Railway runs in UTC
-    const tzString = now.toLocaleString('en-US', { timeZone: process.env.TIMEZONE || 'Asia/Kolkata' });
-    const localNow = new Date(tzString);
-    const currentMinutes = localNow.getHours() * 60 + localNow.getMinutes();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: process.env.TIMEZONE || 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(new Date());
+    const hourStr = parts.find(p => p.type === 'hour')?.value || '0';
+    const minStr = parts.find(p => p.type === 'minute')?.value || '0';
+    let hour = parseInt(hourStr, 10);
+    // Intl sometimes returns 24 for midnight when hour12 is false
+    if (hour === 24) hour = 0;
+    const currentMinutes = hour * 60 + parseInt(minStr, 10);
 
     const schedules = await Schedule.find();
     
@@ -146,7 +154,17 @@ export async function GET(req: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, pushed: pushCount });
+    return NextResponse.json({ 
+      success: true, 
+      pushed: pushCount,
+      debug: {
+        currentMinutes,
+        tasksChecked: tasks.length,
+        schedulesChecked: schedules.length,
+        timeString: new Date().toISOString(),
+        cronInterval
+      }
+    });
   } catch (error: any) {
     console.error("Cron Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
