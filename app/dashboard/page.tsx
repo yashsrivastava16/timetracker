@@ -54,23 +54,57 @@ export default function Home() {
     setToastVisible(true);
   };
 
+  const getLocalDate = () => {
+    const offset = new Date().getTimezoneOffset() * 60000;
+    return new Date(Date.now() - offset).toISOString().split('T')[0];
+  };
+
+  const [completedBlocks, setCompletedBlocks] = useState<string[]>(['wake-review']);
+
+  const saveCompletedBlocksToDB = async (newBlocks: string[]) => {
+    if (!isSignedIn) return;
+    try {
+      const token = await getToken();
+      await fetch('/api/daily-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          date: getLocalDate(),
+          completedBlocks: newBlocks
+        })
+      });
+    } catch (e) {
+      console.error('Failed to save progress', e);
+    }
+  };
+
   const fetchAllData = async () => {
     if (!isSignedIn) return;
     try {
       const token = await getToken();
       const headers = { Authorization: `Bearer ${token}` };
+      const localDate = getLocalDate();
 
-      const [resSchedules, resWeekends, resPhases, resLogs] = await Promise.all([
+      const [resSchedules, resWeekends, resPhases, resLogs, resProgress] = await Promise.all([
         fetch('/api/schedules', { headers }),
         fetch('/api/weekend-schedules', { headers }),
         fetch('/api/phases', { headers }),
-        fetch('/api/daily-logs', { headers })
+        fetch('/api/daily-logs', { headers }),
+        fetch(`/api/daily-progress?date=${localDate}`, { headers })
       ]);
 
       if (resSchedules.ok) setUserSchedules(await resSchedules.json());
       if (resWeekends.ok) setWeekendSchedules(await resWeekends.json());
       if (resPhases.ok) setPhases(await resPhases.json());
       if (resLogs.ok) setStudyLogs(await resLogs.json());
+      if (resProgress.ok) {
+        const progressData = await resProgress.json();
+        if (progressData && progressData.completedBlocks && progressData.completedBlocks.length > 0) {
+          setCompletedBlocks(progressData.completedBlocks);
+        } else {
+          setCompletedBlocks(['wake-review']);
+        }
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -87,43 +121,27 @@ export default function Home() {
   const todayDay = new Date().getDay();
   const isWeekendToday = todayDay === 0 || todayDay === 6;
 
-  // Key for today's completed blocks
-  const todayKey = `prep_blocks_${new Date().toISOString().split('T')[0]}`;
-  const [completedBlocks, setCompletedBlocks] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return ['wake-review'];
-    try {
-      const saved = localStorage.getItem(todayKey);
-      return saved ? JSON.parse(saved) : ['wake-review'];
-    } catch {
-      return ['wake-review'];
-    }
-  });
-
-  // Removed localStorage studyLogs initialization
-
-  // Save completed blocks
-  useEffect(() => {
-    try {
-      localStorage.setItem(todayKey, JSON.stringify(completedBlocks));
-    } catch {
-      // ignore
-    }
-  }, [completedBlocks, todayKey]);
-
   // Study logs are now fetched from DB
 
   const toggleBlockCompletion = (blockId: string) => {
-    if (completedBlocks.includes(blockId)) {
-      setCompletedBlocks((prev) => prev.filter((id) => id !== blockId));
+    const isCompleted = completedBlocks.includes(blockId);
+    let newBlocks: string[];
+    
+    if (isCompleted) {
+      newBlocks = completedBlocks.filter((id) => id !== blockId);
     } else {
-      setCompletedBlocks((prev) => [...prev, blockId]);
+      newBlocks = [...completedBlocks, blockId];
       showToast('Task completed! Great job.');
+    }
+    
+    setCompletedBlocks(newBlocks);
+    saveCompletedBlocksToDB(newBlocks);
 
+    if (!isCompleted) {
       // Auto-generate log
       const block = userSchedules.find(s => s._id === blockId) || weekendSchedules.find(s => s._id === blockId);
       if (block) {
-        const offset = new Date().getTimezoneOffset() * 60000;
-        const localDate = new Date(Date.now() - offset).toISOString().split('T')[0];
+        const localDate = getLocalDate();
 
         const autoLog = {
           date: localDate,
@@ -171,7 +189,9 @@ export default function Home() {
     }
     // Also auto-mark deep work block as completed for today
     if (isDeepWork && !completedBlocks.includes('deep-work')) {
-      setCompletedBlocks((prev) => [...prev, 'deep-work']);
+      const newBlocks = [...completedBlocks, 'deep-work'];
+      setCompletedBlocks(newBlocks);
+      saveCompletedBlocksToDB(newBlocks);
     }
   };
 
